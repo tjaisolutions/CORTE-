@@ -1,0 +1,33 @@
+# Node.js
+node_modules/
+dist/
+build/
+.npm
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Environment Variables (Segurança)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Backend Downloads (Arquivos temporários de vídeo)
+downloads/
+backend/downloads/
+
+# IDEs
+.vscode/
+.idea/
