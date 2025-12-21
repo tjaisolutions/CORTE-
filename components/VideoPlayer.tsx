@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { GeneratedClip, CutStyle, CaptionWord } from '../types';
-import { generateVeoBackground, searchPersonImage, generateNaturalCaptions } from '../services/geminiService';
+import { generateVeoBackground, searchPersonImage } from '../services/geminiService';
 import { IconWand, IconRefresh, IconZap, IconPlay, IconPause } from './Icons';
 
 interface VideoPlayerProps {
@@ -11,44 +11,40 @@ interface VideoPlayerProps {
 }
 
 const OpusCaptions = ({ captions, currentAbsoluteTime }: { captions: CaptionWord[], currentAbsoluteTime: number }) => {
-    const currentWordIndex = captions.findIndex(w => currentAbsoluteTime >= w.start && currentAbsoluteTime <= (w.end + 0.15)); 
+    // Alinhamento de precisão: busca a palavra exata no tempo atual
+    const currentWordIndex = captions.findIndex(w => currentAbsoluteTime >= w.start && currentAbsoluteTime <= (w.end + 0.1)); 
     const currentWord = captions[currentWordIndex];
 
     if (!currentWord) return null;
 
     const getWordStyle = (word: string) => {
         const clean = word.replace(/[^a-zA-Z]/g, '').toUpperCase();
-        if (["DINHEIRO", "MORTE", "SEGREDO", "VOCÊ", "BRASIL", "AGORA", "HOJE"].includes(clean)) return "text-green-400 scale-110";
-        if (["NÃO", "NUNCA", "ERRO", "PARE"].includes(clean)) return "text-red-500 scale-110";
+        if (["DINHEIRO", "VOCÊ", "BRASIL", "AGORA", "HOJE", "IMPORTANTE"].includes(clean)) return "text-yellow-400 scale-110";
+        if (["NÃO", "NUNCA", "ERRO", "PERIGO"].includes(clean)) return "text-red-500 scale-110";
         return "text-white";
     };
 
     const nextWord = captions[currentWordIndex + 1];
 
     return (
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-[90] pointer-events-none pb-20">
-            <div className="flex flex-col items-center gap-2 transition-all duration-75 px-4 text-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-[90] pointer-events-none pb-20 px-4">
+            <div className="flex flex-col items-center gap-2 transition-all duration-75 text-center">
                 <div 
                     className={`
                         text-5xl md:text-7xl font-black uppercase text-center leading-none tracking-tighter
-                        drop-shadow-[0_4px_4px_rgba(0,0,0,1)]
+                        drop-shadow-[0_6px_6px_rgba(0,0,0,1)]
                         ${getWordStyle(currentWord.word)}
-                        animate-in zoom-in-75 duration-75
+                        animate-in zoom-in-90 duration-75
                     `}
                     style={{ 
                         WebkitTextStroke: '2px black',
-                        textShadow: '3px 3px 0 #000, -1px -1px 0 #000',
+                        textShadow: '4px 4px 0 #000, -2px -2px 0 #000',
                         fontFamily: '"Outfit", sans-serif',
-                        transform: `rotate(${currentWord.word.length % 2 === 0 ? '-2deg' : '2deg'})`
+                        transform: `rotate(${currentWord.word.length % 2 === 0 ? '-1.5deg' : '1.5deg'})`
                     }}
                 >
                     {currentWord.word}
                 </div>
-                {nextWord && (
-                    <div className="text-2xl font-bold text-white/30 uppercase blur-[0.5px] mt-2">
-                        {nextWord.word}
-                    </div>
-                )}
             </div>
         </div>
     );
@@ -57,8 +53,6 @@ const OpusCaptions = ({ captions, currentAbsoluteTime }: { captions: CaptionWord
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }) => {
   const [isPlaying, setIsPlaying] = useState(true);
   const [progress, setProgress] = useState(0); 
-  const [displayImage, setDisplayImage] = useState(clip.videoUrl);
-  const [isSearchingImage, setIsSearchingImage] = useState(false);
   const [displayCaptions, setDisplayCaptions] = useState<CaptionWord[]>(clip.captions || []);
 
   const SAFE_LOOPS_IDS = ["swrM1Slc2OI", "X47V_T_8W68", "7cbsvH61LXM", "u7kdVe8q5zs"];
@@ -67,20 +61,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
      return SAFE_LOOPS_IDS[Math.floor(Math.random() * SAFE_LOOPS_IDS.length)];
   });
 
-  const [isGeneratingVeo, setIsGeneratingVeo] = useState(false);
   const start = clip.startTime || 0;
   const end = clip.endTime || (start + 30);
   const duration = end - start;
   const style = clip.style;
 
-  // REPARO DE EMERGÊNCIA (Apenas se o backend falhar miseravelmente)
+  // REMOVIDO: generateNaturalCaptions (Não queremos mais legendas estimadas)
   useEffect(() => {
-      if ((!displayCaptions || displayCaptions.length === 0) && clip.transcriptSnippet) {
-          console.log("⚠️ Sincronia literal ausente. Usando estimativa natural...");
-          const newCaptions = generateNaturalCaptions(clip.transcriptSnippet, duration, start);
-          setDisplayCaptions(newCaptions);
+      if (clip.captions && clip.captions.length > 0) {
+          setDisplayCaptions(clip.captions);
       }
-  }, [clip, duration, start]);
+  }, [clip]);
 
   useEffect(() => {
       let interval: any;
@@ -96,55 +87,69 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
   }, [duration, isPlaying]);
 
   const currentAbsoluteTime = start + progress;
-  const showHookTitle = progress < 2.5;
+  const showHookTitle = progress < 2.0;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-xl p-0 md:p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/98 backdrop-blur-2xl p-0 md:p-4">
       <div className="absolute inset-0" onClick={onClose}></div>
-      <div className="relative w-full h-full md:h-[85vh] md:max-w-[400px] bg-black border-2 border-indigo-500/30 shadow-2xl overflow-hidden md:rounded-3xl flex flex-col group">
+      <div className="relative w-full h-full md:h-[85vh] md:max-w-[400px] bg-black border-2 border-white/10 shadow-2xl overflow-hidden md:rounded-3xl flex flex-col group">
         
+        {/* Top Controls */}
         <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-black/80 to-transparent z-[100] flex justify-between p-4">
-           <button onClick={onClose} className="bg-white/10 text-white rounded-full w-10 h-10 flex items-center justify-center backdrop-blur-md">✕</button>
+           <button onClick={onClose} className="bg-white/10 text-white rounded-full w-10 h-10 flex items-center justify-center backdrop-blur-md hover:bg-white/20 transition-colors">✕</button>
         </div>
 
+        {/* Play/Pause Overlay */}
         <div className="absolute inset-0 z-[95] flex items-center justify-center cursor-pointer" onClick={() => setIsPlaying(!isPlaying)}>
             {!isPlaying && <div className="w-20 h-20 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-md border border-white/20"><IconPlay className="w-10 h-10 text-white ml-1" /></div>}
         </div>
 
+        {/* Hook Title (Title based on first words) */}
         {showHookTitle && (
-            <div className="absolute inset-0 z-[120] flex items-center justify-center pointer-events-none bg-black/40 backdrop-blur-[2px] animate-in fade-in zoom-in duration-300 px-6">
-                <h1 className="text-4xl md:text-5xl font-black text-yellow-400 text-center uppercase leading-tight -rotate-2" style={{ textShadow: '4px 4px 0 #000' }}>{clip.title}</h1>
+            <div className="absolute inset-0 z-[120] flex items-center justify-center pointer-events-none bg-black/60 backdrop-blur-[4px] animate-in fade-in zoom-in duration-500 px-8">
+                <h1 className="text-4xl md:text-5xl font-black text-white text-center uppercase leading-tight -rotate-1 tracking-tighter" style={{ textShadow: '0 0 20px rgba(255,255,255,0.5)' }}>
+                    {clip.title}
+                </h1>
             </div>
         )}
 
-        {!showHookTitle && displayCaptions.length > 0 && (
+        {/* Official Captions Only */}
+        {!showHookTitle && displayCaptions.length > 0 ? (
             <OpusCaptions captions={displayCaptions} currentAbsoluteTime={currentAbsoluteTime} />
+        ) : !showHookTitle && (
+            <div className="absolute bottom-32 left-0 right-0 z-[90] text-center px-6">
+                <p className="text-xs text-white/30 uppercase font-bold tracking-widest">Aguardando áudio oficial...</p>
+            </div>
         )}
 
         <div className="w-full h-full flex flex-col relative bg-black">
-          <div className={`w-full relative overflow-hidden bg-black ${(style === CutStyle.SPLIT_SATISFYING || style === CutStyle.SPLIT_CONTEXT) ? 'h-[55%]' : 'h-full'}`}>
+          {/* Main Video Section */}
+          <div className={`w-full relative overflow-hidden bg-black ${(style === CutStyle.SPLIT_SATISFYING || style === CutStyle.SPLIT_CONTEXT) ? 'h-[50%]' : 'h-full'}`}>
             <div className="w-full h-full relative">
                 <iframe 
                     className="w-full h-full object-cover pointer-events-none absolute top-1/2 left-1/2"
-                    src={`https://www.youtube.com/embed/${clip.videoId}?start=${Math.floor(start)}&end=${Math.floor(end)}&autoplay=1&controls=0&modestbranding=1&rel=0&showinfo=0&mute=0&loop=1&playlist=${clip.videoId}&playsinline=1`}
+                    src={`https://www.youtube.com/embed/${clip.videoId}?start=${Math.floor(start)}&end=${Math.floor(end)}&autoplay=1&controls=0&modestbranding=1&rel=0&showinfo=0&mute=0&loop=1&playlist=${clip.videoId}&playsinline=1&enablejsapi=1`}
                     style={{ pointerEvents: 'none', transform: 'translate(-50%, -50%) scale(3.5)', width: '100%', height: '100%' }} 
                 ></iframe>
-                <div className="absolute inset-0 z-10"></div>
+                <div className="absolute inset-0 z-10 bg-gradient-to-t from-black/20 via-transparent to-black/20"></div>
             </div>
           </div>
 
+          {/* Satisfying Video Section */}
           {(style === CutStyle.SPLIT_SATISFYING || style === CutStyle.SPLIT_CONTEXT) && (
-            <div className="w-full h-[45%] relative overflow-hidden bg-zinc-900 border-t border-white/10">
+            <div className="w-full h-[50%] relative overflow-hidden bg-zinc-900 border-t-4 border-black">
                <iframe 
                     src={`https://www.youtube.com/embed/${viralBg}?autoplay=1&mute=1&controls=0&loop=1&playlist=${viralBg}&playsinline=1`}
                     className="w-full h-full object-cover pointer-events-none scale-150"
                />
+               <div className="absolute inset-0 bg-black/10"></div>
             </div>
           )}
         </div>
         
-        <div className="absolute bottom-0 left-0 h-1.5 bg-white/10 w-full z-[100]">
-             <div className="h-full bg-indigo-500 transition-all duration-100 ease-linear" style={{ width: `${(progress / duration) * 100}%` }}></div>
+        {/* Progress Bar */}
+        <div className="absolute bottom-0 left-0 h-2 bg-white/5 w-full z-[100]">
+             <div className="h-full bg-white shadow-[0_0_15px_rgba(255,255,255,0.8)] transition-all duration-100 ease-linear" style={{ width: `${(progress / duration) * 100}%` }}></div>
         </div>
       </div>
     </div>

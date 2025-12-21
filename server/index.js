@@ -29,23 +29,20 @@ const getYoutubeId = (url) => {
 };
 
 /**
- * EXTRAÇÃO LITERAL: Pega o texto EXATO da transcrição oficial
+ * EXTRAÇÃO LITERAL ESTRITA: 
+ * Filtra os blocos originais do YouTube sem alterar nenhuma letra.
  */
-const extractLiteralSnippet = (transcriptItems, startTime, endTime) => {
+const getLiteralCaptions = (transcriptItems, startTime, endTime) => {
+    if (!transcriptItems || transcriptItems.length === 0) return [];
+    
     return transcriptItems
         .filter(item => {
             const itemStart = item.offset / 1000;
-            return itemStart >= startTime && itemStart <= endTime;
+            const itemEnd = (item.offset + item.duration) / 1000;
+            // Pega blocos que se sobrepõem ao intervalo do corte
+            return (itemStart >= startTime && itemStart <= endTime) || 
+                   (itemEnd >= startTime && itemEnd <= endTime);
         })
-        .map(item => item.text)
-        .join(' ')
-        .replace(/\n/g, ' ')
-        .trim();
-};
-
-const mapToWordLevel = (transcriptItems, startTime, endTime) => {
-    return transcriptItems
-        .filter(item => (item.offset / 1000) >= (startTime - 1) && (item.offset / 1000) <= (endTime + 1))
         .flatMap(item => {
             const words = item.text.split(/\s+/).filter(w => w.length > 0);
             const durationPerWord = (item.duration / 1000) / words.length;
@@ -62,51 +59,38 @@ app.post('/api/process-video', async (req, res) => {
     const { url } = req.body;
     const videoId = getYoutubeId(url);
 
-    // Suporte a outras plataformas (Lógica de detecção)
-    const isOtherPlatform = url.includes('tiktok.com') || url.includes('kwai.com') || url.includes('twitch.tv');
-
-    if (!videoId && !isOtherPlatform) {
-        return res.status(400).json({ error: 'URL inválida. Suportamos YouTube, TikTok, Kwai e Twitch.' });
+    if (!videoId) {
+        return res.status(400).json({ error: 'URL do YouTube inválida.' });
     }
 
     try {
-        if (isOtherPlatform) {
-            console.log(`[Backend] Processando plataforma externa: ${url}`);
-            // No Render Free, não podemos baixar o vídeo para processar áudio localmente sem crashar.
-            // Usamos o Gemini como analista visual/descritivo (Simulado para o MVP)
-            return res.status(200).json([{
-                title: "Corte Viral de Plataforma Externa",
-                viralScore: 90,
-                startTime: 5,
-                endTime: 35,
-                transcriptSnippet: "Transcrição em tempo real para TikTok/Kwai requer plano Pro (Processamento ASR Dedicado).",
-                videoId: "external",
-                captions: []
-            }]);
-        }
-
-        console.log(`[Backend] Iniciando processamento YouTube (Fidelidade Máxima): ${videoId}`);
+        console.log(`[Backend] Buscando transcrição oficial para: ${videoId}`);
         
         let transcript;
         try {
-            transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'pt' });
+            // Tenta Português, se falhar tenta a padrão
+            transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'pt' })
+                .catch(() => YoutubeTranscript.fetchTranscript(videoId));
         } catch (e) {
-            return res.status(422).json({ error: "Este vídeo não possui legendas oficiais para extração literal." });
+            return res.status(422).json({ error: "Este vídeo não possui transcrição disponível no YouTube." });
         }
 
         const fullTranscriptText = transcript
             .map(t => `[${(t.offset / 1000).toFixed(1)}s] ${t.text}`)
-            .join(' ');
+            .join(' ')
+            .substring(0, 30000);
 
         const prompt = `
-            Você é um ANALISTA TÉCNICO de retenção.
-            TRANSCRIÇÃO LITERAL:
+            Você é um localizador de tempos para cortes virais.
+            Sua única tarefa é ler a TRANSCRIÇÃO e identificar 3 intervalos (30-60s) com alto potencial de retenção.
+            
+            TRANSCRIÇÃO:
             ${fullTranscriptText}
 
-            TAREFA:
-            1. Encontre os 3 melhores tempos de início e fim (30-60s).
-            2. NÃO mude nenhuma palavra. NÃO resuma.
-            3. Retorne apenas os tempos exatos baseados nos colchetes [xs].
+            REGRAS CRÍTICAS:
+            1. NÃO resuma o texto.
+            2. NÃO crie novos títulos baseados em interpretação, use frases do vídeo.
+            3. Retorne APENAS os tempos de início e fim baseados nos marcadores [xs].
 
             JSON Schema:
             Array<{ title: string, viralScore: number, startTime: number, endTime: number }>
@@ -135,19 +119,23 @@ app.post('/api/process-video', async (req, res) => {
 
         const timeSlots = JSON.parse(response.text || "[]");
 
-        const enrichedClips = timeSlots.map(slot => ({
-            ...slot,
-            videoId: videoId,
-            // RECORTA O TEXTO REAL DA TRANSCRIÇÃO ORIGINAL (ZERO ALUCINAÇÃO)
-            transcriptSnippet: extractLiteralSnippet(transcript, slot.startTime, slot.endTime),
-            captions: mapToWordLevel(transcript, slot.startTime, slot.endTime)
-        }));
+        const enrichedClips = timeSlots.map(slot => {
+            const literalCaptions = getLiteralCaptions(transcript, slot.startTime, slot.endTime);
+            const fullText = literalCaptions.map(c => c.word).join(' ');
+
+            return {
+                ...slot,
+                videoId: videoId,
+                transcriptSnippet: fullText, // Texto 100% original
+                captions: literalCaptions    // Tempos 100% originais
+            };
+        });
 
         res.json(enrichedClips);
 
     } catch (error) {
         console.error("[Backend Error]", error);
-        res.status(500).json({ error: "Erro no processamento: " + error.message });
+        res.status(500).json({ error: "Erro crítico: " + error.message });
     }
 });
 
