@@ -21,17 +21,15 @@ const ClipResult: React.FC<ClipResultProps> = ({
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (clip.videoId === 'local' && clip.videoUrl) {
-        // Download direto para arquivos locais
-        const link = document.createElement('a');
-        link.href = clip.videoUrl;
-        link.download = `${clip.title.replace(/\s+/g, '_')}.mp4`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    if (clip.videoId === 'local' || clip.isLocal) {
+        // Download direto de arquivos locais através do endpoint de download
+        const filename = clip.videoUrl.split('/').pop();
+        window.location.href = `/api/download-local/${filename}`;
     } else {
-        // Para YouTube, abrimos o player/alerta
-        alert("Para vídeos do YouTube, use o botão 'Exportar Lote' na galeria para gerar o script de download real.");
+        // YouTube: Copia o script yt-dlp
+        const script = `yt-dlp --download-sections "*${clip.startTime}-${clip.endTime}" -f "bestvideo+bestaudio" -o "${clip.title.replace(/\s+/g, '_')}.mp4" "https://www.youtube.com/watch?v=${clip.videoId}"`;
+        navigator.clipboard.writeText(script);
+        alert("Comando de download copiado para vídeos do YouTube! Execute no seu terminal:\n\n" + script);
     }
   };
 
@@ -93,7 +91,7 @@ const ClipResult: React.FC<ClipResultProps> = ({
             }`}>
                 {clip.viralScore}
             </div>
-            {clip.videoId === 'local' && (
+            {(clip.videoId === 'local' || clip.isLocal) && (
                 <div className="bg-emerald-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm">UPLOAD</div>
             )}
          </div>

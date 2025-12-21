@@ -1,12 +1,12 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Job, ProcessingStatus, ChannelMonitor, GeneratedClip, EditingConfig,
   AudioMood, BRollType, ManualEdits, ConnectedAccount, SocialPlatform, Project, AutoReplyConfig, AgencyConfig,
   User, PlanTier, CutStyle, ViralTrack
 } from '../types';
 import { MOCK_CHANNELS, DEFAULT_CONFIG, MOCK_VIRAL_TRACKS } from '../constants';
-import { apiService } from '../services/apiService';
+import { apiService } from '../services/apiService'; // Importante: Usa o service atualizado
 
 // Components
 import Sidebar from './Sidebar';
@@ -24,7 +24,7 @@ import AgencySettingsModal from './AgencySettingsModal';
 import AutoReplyModal from './AutoReplyModal';
 import ProjectSidebar from './ProjectSidebar';
 import PricingModal from './PricingModal';
-import { IconSearch, IconBell, IconPlus, IconZap, IconCloud, IconVideo } from './Icons';
+import { IconSearch, IconBell, IconPlus, IconZap } from './Icons';
 
 const getYoutubeId = (url: string) => {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
@@ -46,9 +46,8 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
   const [inputUrl, setInputUrl] = useState(initialUrl || '');
   const [editingConfig, setEditingConfig] = useState<EditingConfig>(DEFAULT_CONFIG);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
+  const [channels, setChannels] = useState<ChannelMonitor[]>(MOCK_CHANNELS);
+  
   const [projects, setProjects] = useState<Project[]>([
     { id: 'p1', name: 'Podcast Vilela', clientName: 'Vilela', createdAt: new Date(), clipCount: 12, color: 'bg-emerald-500' },
     { id: 'p2', name: 'Cortes Financeiros', clientName: 'Primo', createdAt: new Date(), clipCount: 5, color: 'bg-blue-500' }
@@ -78,64 +77,38 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
       primaryColor: '#ffffff' 
   });
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
+  useEffect(() => {
+    if (agencyConfig.isEnabled) {
+      document.documentElement.style.setProperty('--color-accent-500', agencyConfig.primaryColor);
+    }
+  }, [agencyConfig]);
 
-      setIsUploading(true);
-      setActiveTab('queue');
-
-      const tempJob: Job = {
-          id: `up-${Date.now()}`,
-          source: {
-              id: 'local',
-              url: '',
-              title: `Upload: ${file.name}`,
-              thumbnail: 'https://via.placeholder.com/300x200?text=MP4+Upload',
-              channelName: 'Local File',
-              duration: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-              addedAt: new Date()
-          },
-          status: ProcessingStatus.ANALYZING,
-          progress: 50,
-          generatedClips: [],
-          config: editingConfig
-      };
-
-      setJobs(prev => [tempJob, ...prev]);
-
-      try {
-          const results = await apiService.uploadVideo(file, editingConfig.styles);
-          const expanded = results.map(r => ({
-              ...r,
-              id: Math.random().toString(36).substr(2, 9),
-              sourceId: 'local',
-              projectId: activeProjectId || undefined,
-              videoUrl: r.videoUrl || 'https://via.placeholder.com/300/500?text=Clip',
-              isLocal: true
-          })) as GeneratedClip[];
-
-          setJobs(prev => prev.map(j => j.id === tempJob.id ? { 
-              ...j, 
-              status: ProcessingStatus.COMPLETED, 
-              progress: 100, 
-              generatedClips: expanded 
-          } : j));
-      } catch (e) {
-          alert("Erro no upload: " + e.message);
-          setJobs(prev => prev.map(j => j.id === tempJob.id ? { ...j, status: ProcessingStatus.FAILED } : j));
-      } finally {
-          setIsUploading(false);
-          if (fileInputRef.current) fileInputRef.current.value = '';
+  const checkFeatureAccess = (feature: 'AGENCY' | '4K_RENDER' | 'UNLIMITED_CLIPS') => {
+      const plan = user.subscription.plan;
+      if (feature === 'AGENCY' && plan !== PlanTier.AGENCY) {
+          setShowPricingModal(true);
+          return false;
       }
+      if (feature === '4K_RENDER' && plan === PlanTier.FREE) {
+          setShowPricingModal(true);
+          return false;
+      }
+      return true;
   };
 
-  const handleProcessVideo = async () => {
-    if (!inputUrl) return;
-    const urls = inputUrl.split(/[\n,]+/).map(u => u.trim()).filter(u => u.length > 0);
-    setActiveTab('queue');
-    setInputUrl('');
-    urls.forEach(url => processSingleUrl(url));
+  const handleConnectAccount = (platform: SocialPlatform) => {
+    const newAccount: ConnectedAccount = {
+        id: `acc_${Date.now()}`,
+        platform,
+        username: `user_${platform.toLowerCase()}`,
+        isConnected: true,
+        avatarUrl: `https://picsum.photos/50/50?r=${Math.random()}`
+    };
+    setConnectedAccounts([...connectedAccounts, newAccount]);
+  };
+
+  const handleDisconnectAccount = (accountId: string) => {
+      setConnectedAccounts(connectedAccounts.filter(a => a.id !== accountId));
   };
 
   const processSingleUrl = async (url: string) => {
@@ -147,9 +120,9 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
       source: {
         id: videoId,
         url: url,
-        title: `YouTube: ${videoId}`,
+        title: `Processando ${videoId}...`,
         thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-        channelName: 'YouTube',
+        channelName: 'YouTube Channel',
         duration: '...',
         addedAt: new Date()
       },
@@ -162,27 +135,83 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
     setJobs(prev => [newJob, ...prev]);
 
     try {
+        // CALL BACKEND OR FALLBACK
         const analysisResults = await apiService.processVideo(url, editingConfig.styles);
-        const expandedClips = analysisResults.map(rawClip => ({
-            ...rawClip,
-            id: Math.random().toString(36).substr(2, 9),
-            sourceId: newJob.source.id,
-            projectId: activeProjectId || undefined,
-            videoId: videoId,
-            videoUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-        })) as GeneratedClip[];
+        
+        let expandedClips: GeneratedClip[] = [];
+        
+        analysisResults.forEach((rawClip, index) => {
+            editingConfig.styles.forEach((style) => {
+                expandedClips.push({
+                    ...rawClip,
+                    id: Math.random().toString(36).substr(2, 9),
+                    sourceId: newJob.source.id,
+                    projectId: activeProjectId || undefined,
+                    videoId: videoId, 
+                    title: rawClip.title || `Corte Viral ${index + 1}`,
+                    viralScore: rawClip.viralScore || 85,
+                    style: style,
+                    videoUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, 
+                    startTime: rawClip.startTime || 60,
+                    endTime: rawClip.endTime || 90,
+                    transcriptSnippet: rawClip.transcriptSnippet || "Texto processado...",
+                    hashtags: rawClip.hashtags || ["#viral"],
+                    socialMetadata: rawClip.socialMetadata,
+                    appliedTech: {
+                        faceTracking: editingConfig.faceTracking === 'ACTIVE_SPEAKER_AI',
+                        mastered: editingConfig.audioMastering
+                    }
+                } as GeneratedClip);
+            });
+        });
 
+        // Update Job with Clips
         setJobs(prev => prev.map(j => j.id === newJob.id ? { 
             ...j, 
             status: ProcessingStatus.COMPLETED, 
             progress: 100,
-            generatedClips: expandedClips
+            generatedClips: expandedClips,
+            source: { ...j.source, title: expandedClips[0]?.title || "Vídeo Processado" }
         } : j));
+
     } catch (error) {
+        console.error(error);
         setJobs(prev => prev.map(j => j.id === newJob.id ? { ...j, status: ProcessingStatus.FAILED } : j));
     }
   };
 
+  const handleProcessVideo = async () => {
+    if (!inputUrl) return;
+    const urls = inputUrl.split(/[\n,]+/).map(u => u.trim()).filter(u => u.length > 0);
+    
+    if (urls.length === 0) {
+      alert("Por favor, insira pelo menos um link válido do YouTube.");
+      return;
+    }
+
+    setActiveTab('queue');
+    setInputUrl('');
+
+    urls.forEach((url, index) => {
+        setTimeout(() => {
+            processSingleUrl(url);
+        }, index * 1000);
+    });
+  };
+
+  const handleSimulation = () => {
+    setInputUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    setTimeout(() => handleProcessVideo(), 100);
+  };
+
+  const handleSaveEdit = (clipId: string, edits: ManualEdits) => {
+    setJobs(prevJobs => prevJobs.map(job => ({
+        ...job,
+        generatedClips: job.generatedClips.map(c => c.id === clipId ? { ...c, manualEdits: edits } : c)
+    })));
+  };
+
+  // Função para salvar a URL gerada pelo VEO (VideoPlayer callback)
   const handleUpdateClip = (updatedClip: GeneratedClip) => {
       setJobs(prevJobs => prevJobs.map(job => ({
           ...job,
@@ -190,30 +219,67 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
       })));
   };
 
-  // Fix: Implemented handlePublish to mock the publishing process and update clip history.
+  const handleRegenerateVariant = (clip: GeneratedClip) => {
+      const variant: GeneratedClip = {
+          ...clip,
+          id: Math.random().toString(),
+          title: `${clip.title} (Pivot V2)`,
+          viralScore: Math.min(100, clip.viralScore + 5),
+          style: clip.style === CutStyle.STANDARD_VERTICAL ? CutStyle.SPLIT_SATISFYING : CutStyle.STANDARD_VERTICAL,
+          abVariant: 'C',
+          manualEdits: { ...clip.manualEdits, customTitle: `${clip.title} 🔥` }
+      };
+      
+      setJobs(prev => prev.map(j => {
+          if (j.generatedClips.find(c => c.id === clip.id)) {
+              return { ...j, generatedClips: [variant, ...j.generatedClips] };
+          }
+          return j;
+      }));
+  };
+
   const handlePublish = (clipId: string, accountIds: string[]) => {
-      setJobs(prevJobs => prevJobs.map(job => ({
-          ...job,
-          generatedClips: job.generatedClips.map(clip => {
-              if (clip.id === clipId) {
-                  const newHistory = accountIds.map(accId => {
-                      const acc = connectedAccounts.find(a => a.id === accId);
-                      return {
-                          platform: acc?.platform || 'TIKTOK' as SocialPlatform,
-                          status: 'PUBLISHED' as const,
-                          publishedAt: new Date(),
-                          postUrl: '#'
-                      };
-                  });
-                  return {
-                      ...clip,
-                      publishHistory: [...(clip.publishHistory || []), ...newHistory]
-                  };
+      setJobs(prev => prev.map(j => ({
+          ...j,
+          generatedClips: j.generatedClips.map(c => {
+              if (c.id === clipId || (bulkPublishing && bulkPublishing.find(bc => bc.id === c.id))) {
+                   return c; 
               }
-              return clip;
+              return c;
           })
       })));
       setPublishingClip(null);
+      setBulkPublishing(null);
+      setSelectionMode(false);
+      setSelectedClipIds([]);
+  };
+
+  const handleCreateProject = (name: string, clientName: string) => {
+      const newProject: Project = {
+          id: Math.random().toString(),
+          name,
+          clientName,
+          createdAt: new Date(),
+          clipCount: 0,
+          color: 'bg-indigo-500'
+      };
+      setProjects([...projects, newProject]);
+      setActiveProjectId(newProject.id);
+  };
+
+  const toggleClipSelection = (clipId: string) => {
+      if (selectedClipIds.includes(clipId)) {
+          setSelectedClipIds(selectedClipIds.filter(id => id !== clipId));
+      } else {
+          setSelectedClipIds([...selectedClipIds, clipId]);
+      }
+  };
+
+  const handleBulkPublishClick = () => {
+      const clipsToPublish = jobs.flatMap(j => j.generatedClips).filter(c => selectedClipIds.includes(c.id));
+      if (clipsToPublish.length > 0) {
+          setBulkPublishing(clipsToPublish);
+      }
   };
 
   const allClips = jobs.flatMap(j => j.generatedClips).filter(c => !activeProjectId || c.projectId === activeProjectId);
@@ -221,13 +287,21 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
 
   return (
     <div className="fixed inset-0 flex h-screen bg-grafite-950 text-white font-sans overflow-hidden relative">
+      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[1200px] h-[600px] bg-indigo-500/10 blur-[130px] rounded-full pointer-events-none z-0"></div>
+
       <Sidebar 
-        activeTab={activeTab} onTabChange={setActiveTab} projects={projects}
-        activeProjectId={activeProjectId} onProjectSelect={setActiveProjectId}
-        onCreateProject={() => setActiveTab('gallery')} agencyConfig={agencyConfig}
-        onOpenAgencySettings={() => setShowAgencySettings(true)}
-        onOpenIntegrations={() => setShowIntegrations(true)} user={user}
-        onUpgradeClick={() => setShowPricingModal(true)} onLogout={onLogout}
+        activeTab={activeTab} 
+        onTabChange={setActiveTab}
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onProjectSelect={setActiveProjectId}
+        onCreateProject={() => setActiveTab('gallery')}
+        agencyConfig={agencyConfig}
+        onOpenAgencySettings={() => checkFeatureAccess('AGENCY') && setShowAgencySettings(true)}
+        onOpenIntegrations={() => setShowIntegrations(true)}
+        user={user}
+        onUpgradeClick={() => setShowPricingModal(true)}
+        onLogout={onLogout}
         onNavigateToSite={onNavigateToSite}
       />
 
@@ -236,65 +310,139 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
            <div className="flex items-center gap-4 flex-1">
               <div className="relative w-full max-w-md">
                  <IconSearch className="absolute left-3 top-2.5 text-slate-500 w-4 h-4" />
-                 <input type="text" placeholder="Buscar na biblioteca..." className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none" />
+                 <input 
+                   type="text" 
+                   placeholder="Buscar na biblioteca..." 
+                   className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:border-indigo-500/50 focus:bg-white/10 focus:outline-none transition-colors"
+                 />
               </div>
+           </div>
+           <div className="flex items-center gap-4">
+              <button className="p-2 text-slate-400 hover:text-white transition-colors relative">
+                 <IconBell className="w-5 h-5" />
+                 <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]"></span>
+              </button>
            </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6 custom-scrollbar relative">
+        <main className="flex-1 overflow-y-auto p-6 scroll-smooth custom-scrollbar relative">
+          
           {activeTab === 'studio' && (
             <div className="max-w-4xl mx-auto space-y-8 animate-fade-in pb-20">
+                
                 <div className="text-center py-12">
-                    <h1 className="text-4xl md:text-5xl font-bold mb-4 tracking-tight text-white">Industrialize seu conteúdo.</h1>
-                    <p className="text-slate-400 text-lg mb-8 max-w-2xl mx-auto">Insira links do YouTube ou faça upload de arquivos MP4 para começar.</p>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-xs font-medium text-indigo-300 mb-6 backdrop-blur-sm">
+                        <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                        Corte+ Neural Engine v3.0
+                    </div>
+                    <h1 className="text-4xl md:text-5xl font-bold mb-4 tracking-tight leading-tight text-white">
+                        Construa audiência com <br />
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">escala industrial.</span>
+                    </h1>
+                    <p className="text-slate-400 text-lg mb-8 max-w-2xl mx-auto">
+                        Cole múltiplos URLs (um por linha) para processamento em lote com legendas sincronizadas.
+                    </p>
                     
-                    <div className="max-w-2xl mx-auto space-y-4">
-                        <div className="relative bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl p-2 flex flex-col">
+                    <div className="relative max-w-2xl mx-auto group">
+                        <div className="absolute inset-0 bg-indigo-500/20 rounded-xl blur-xl group-hover:bg-indigo-500/30 transition-all duration-500 opacity-50"></div>
+                        <div className="relative flex flex-col bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl p-2 shadow-2xl transition-all group-hover:border-white/20">
                             <textarea 
-                                value={inputUrl} onChange={(e) => setInputUrl(e.target.value)}
-                                placeholder="https://youtube.com/watch?v=..." 
-                                className="bg-transparent border-none outline-none text-white px-4 py-3 placeholder-slate-600 text-sm min-h-[80px] resize-none"
+                                value={inputUrl}
+                                onChange={(e) => setInputUrl(e.target.value)}
+                                placeholder="https://youtube.com/watch?v=...&#10;https://youtube.com/watch?v=...&#10;https://youtube.com/watch?v=..." 
+                                className="flex-1 bg-transparent border-none outline-none text-white px-4 py-3 placeholder-slate-600 text-sm min-h-[100px] resize-none scrollbar-thin"
                             />
-                            <div className="flex justify-between items-center p-2 border-t border-white/5">
-                                <input type="file" accept="video/mp4,video/x-m4v,video/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-                                <button 
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className="text-xs text-slate-400 hover:text-white flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 hover:bg-white/5 transition-all"
-                                >
-                                    <IconCloud className="w-4 h-4" /> Upload MP4
-                                </button>
+                            <div className="flex justify-end p-2 border-t border-white/5">
                                 <button 
                                     onClick={handleProcessVideo}
-                                    className="bg-white text-grafite-950 px-8 py-2 rounded-lg font-bold hover:bg-slate-200 transition-all flex items-center gap-2 text-sm"
+                                    className="bg-white text-grafite-950 px-8 py-2 rounded-lg font-bold hover:bg-slate-200 transition-all flex items-center gap-2 shadow-lg text-sm"
                                 >
-                                    <IconZap className="w-4 h-4" /> Processar Link
+                                    <IconPlus className="w-4 h-4" />
+                                    Processar Fila
                                 </button>
                             </div>
                         </div>
                     </div>
+                    
+                    <button onClick={handleSimulation} className="mt-4 text-xs text-slate-500 hover:text-white underline">
+                        Simular (Modo Demo)
+                    </button>
                 </div>
 
-                <div className="bg-white/5 border border-white/5 rounded-2xl p-6 backdrop-blur-md">
-                    <StyleSelector config={editingConfig} onChange={setEditingConfig} />
+                <div className="bg-white/5 border border-white/5 rounded-2xl p-1 shadow-2xl backdrop-blur-md">
+                    <div className="p-4 border-b border-white/5">
+                        <h3 className="font-bold text-white flex items-center gap-2">
+                           <IconZap className="w-4 h-4 text-indigo-400" />
+                           Painel de Engenharia
+                        </h3>
+                    </div>
+                    <div className="p-6">
+                        <StyleSelector config={editingConfig} onChange={setEditingConfig} />
+                    </div>
                 </div>
+
+                {activeJobs.length > 0 && (
+                    <div className="space-y-4">
+                        <h3 className="font-bold text-slate-400 text-sm uppercase tracking-widest pl-2">Processando Agora ({activeJobs.length})</h3>
+                        {activeJobs.map(job => (
+                            <JobCard key={job.id} job={job} />
+                        ))}
+                    </div>
+                )}
             </div>
           )}
 
           {activeTab === 'gallery' && (
              <div className="flex h-full gap-6">
-                 <ProjectSidebar projects={projects} activeProjectId={activeProjectId} onSelectProject={setActiveProjectId} onCreateProject={() => {}} />
+                 <ProjectSidebar 
+                    projects={projects}
+                    activeProjectId={activeProjectId}
+                    onSelectProject={setActiveProjectId}
+                    onCreateProject={handleCreateProject}
+                 />
+                 
                  <div className="flex-1 space-y-6 animate-fade-in">
                     <div className="flex items-center justify-between">
-                        <h2 className="text-2xl font-bold text-white">Galeria de Ativos</h2>
-                        <button onClick={() => setShowExportModal(true)} className="bg-white text-grafite-950 px-4 py-2 rounded-lg text-sm font-bold">Exportar Lote</button>
+                        <h2 className="text-2xl font-bold text-white">
+                           {activeProjectId ? projects.find(p => p.id === activeProjectId)?.name : 'Todos os Cortes'}
+                           <span className="text-slate-500 text-lg font-normal ml-3">{allClips.length} vídeos</span>
+                        </h2>
+                        
+                        <div className="flex gap-3">
+                           <button 
+                             onClick={() => {
+                                 setSelectionMode(!selectionMode);
+                                 setSelectedClipIds([]);
+                             }}
+                             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${selectionMode ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
+                           >
+                             {selectionMode ? 'Cancelar Seleção' : 'Selecionar Vários'}
+                           </button>
+                           <button 
+                              onClick={() => {
+                                  if (!checkFeatureAccess('4K_RENDER')) return;
+                                  setShowExportModal(true);
+                              }}
+                              className="bg-white text-grafite-950 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-200 transition-colors flex items-center gap-2"
+                           >
+                              Exportar Real
+                           </button>
+                        </div>
                     </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">
                         {allClips.map(clip => (
                             <ClipResult 
-                                key={clip.id} clip={clip} onPlay={setPlayingClip} onEdit={setEditingClip}
+                                key={clip.id} 
+                                clip={clip} 
+                                onPlay={setPlayingClip} 
+                                onAudit={setAuditClip}
+                                onEdit={setEditingClip}
                                 onPublish={(c) => setPublishingClip(c)}
-                                selectionMode={selectionMode} isSelected={selectedClipIds.includes(clip.id)}
-                                onToggleSelection={() => {}}
+                                selectionMode={selectionMode}
+                                isSelected={selectedClipIds.includes(clip.id)}
+                                onToggleSelection={() => toggleClipSelection(clip.id)}
+                                onRegenerate={() => handleRegenerateVariant(clip)}
                             />
                         ))}
                     </div>
@@ -302,22 +450,129 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
              </div>
           )}
 
-          {(activeTab === 'queue' || activeTab === 'studio') && activeJobs.length > 0 && (
-              <div className="max-w-3xl mx-auto mt-8 space-y-4">
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest px-2">Monitor de Processamento</h3>
-                  {activeJobs.map(job => <JobCard key={job.id} job={job} />)}
-              </div>
+          {activeTab === 'queue' && (
+             <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+                 <h2 className="text-2xl font-bold text-white mb-6">Fila de Processamento</h2>
+                 {jobs.length === 0 ? (
+                     <div className="text-center py-20 text-slate-500 border border-dashed border-white/10 rounded-2xl bg-white/5">
+                         Nenhum trabalho na fila.
+                     </div>
+                 ) : (
+                     jobs.map(job => <JobCard key={job.id} job={job} />)
+                 )}
+             </div>
           )}
+
+          {activeTab === 'dashboard' && <AnalyticsDashboard />}
+
         </main>
+        
+        {selectionMode && selectedClipIds.length > 0 && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-grafite-900/90 backdrop-blur-xl border border-white/10 shadow-2xl rounded-full px-8 py-4 flex items-center gap-8 animate-slide-up z-30">
+                <span className="text-sm font-bold text-white">{selectedClipIds.length} selecionados</span>
+                <div className="h-4 w-px bg-white/20"></div>
+                <button 
+                    onClick={handleBulkPublishClick}
+                    className="text-sm font-bold text-indigo-400 hover:text-white transition-colors"
+                >
+                    🚀 Publicar em Massa
+                </button>
+                <button 
+                    onClick={() => {
+                         if (!checkFeatureAccess('4K_RENDER')) return;
+                         setShowExportModal(true); 
+                    }}
+                    className="text-sm font-bold text-emerald-400 hover:text-white transition-colors"
+                >
+                    ⬇ Baixar (ZIP)
+                </button>
+            </div>
+        )}
+
       </div>
 
-      {playingClip && <VideoPlayer clip={playingClip} onClose={() => setPlayingClip(null)} onUpdateClip={handleUpdateClip} />}
-      {showExportModal && <RendererModal clips={allClips} onClose={() => setShowExportModal(false)} />}
-      {editingClip && <EditorModal clip={editingClip} onSave={() => {}} onClose={() => setEditingClip(null)} />}
-      {showIntegrations && <IntegrationsModal accounts={connectedAccounts} onConnect={() => {}} onDisconnect={() => {}} onClose={() => setShowIntegrations(false)} />}
-      {publishingClip && <PublishModal clip={publishingClip} accounts={connectedAccounts} onPublish={handlePublish} onClose={() => setPublishingClip(null)} />}
-      {showAgencySettings && <AgencySettingsModal config={agencyConfig} onSave={setAgencyConfig} onClose={() => setShowAgencySettings(false)} />}
-      {showPricingModal && <PricingModal currentPlan={user.subscription.plan} onUpgrade={onUpgradeUser} onClose={() => setShowPricingModal(false)} />}
+      {playingClip && <VideoPlayer 
+          clip={playingClip} 
+          onClose={() => setPlayingClip(null)} 
+          onUpdateClip={handleUpdateClip}
+      />}
+      
+      {showExportModal && (
+        <RendererModal 
+            clips={selectionMode && selectedClipIds.length > 0 
+                ? allClips.filter(c => selectedClipIds.includes(c.id))
+                : allClips
+            } 
+            onClose={() => setShowExportModal(false)} 
+        />
+      )}
+      
+      {auditClip && (
+        <ViralAuditModal 
+            clip={auditClip} 
+            audit={auditClip.audit || null} 
+            isLoading={false} 
+            onClose={() => setAuditClip(null)} 
+        />
+      )}
+      
+      {editingClip && (
+        <EditorModal 
+           clip={editingClip} 
+           onSave={handleSaveEdit} 
+           onClose={() => setEditingClip(null)}
+           onCheckCopyright={(id) => alert(`Copyright Check started for ${id}`)}
+        />
+      )}
+      
+      {showIntegrations && (
+        <IntegrationsModal 
+           accounts={connectedAccounts} 
+           onConnect={handleConnectAccount}
+           onDisconnect={handleDisconnectAccount}
+           onClose={() => setShowIntegrations(false)} 
+        />
+      )}
+
+      {(publishingClip || bulkPublishing) && (
+        <PublishModal 
+           clip={publishingClip || bulkPublishing![0]} 
+           accounts={connectedAccounts}
+           onPublish={(id, accs) => {
+               if (bulkPublishing) {
+                   bulkPublishing.forEach(c => handlePublish(c.id, accs));
+               } else {
+                   handlePublish(id, accs);
+               }
+           }}
+           onClose={() => { setPublishingClip(null); setBulkPublishing(null); }}
+        />
+      )}
+
+      {showAgencySettings && (
+          <AgencySettingsModal 
+             config={agencyConfig}
+             onSave={setAgencyConfig}
+             onClose={() => setShowAgencySettings(false)}
+          />
+      )}
+
+      {showPricingModal && (
+          <PricingModal 
+             currentPlan={user.subscription.plan}
+             onUpgrade={onUpgradeUser}
+             onClose={() => setShowPricingModal(false)}
+          />
+      )}
+      
+      {showAutoReplyModal && (
+          <AutoReplyModal 
+             clip={showAutoReplyModal}
+             onSave={(conf) => setShowAutoReplyModal(null)}
+             onClose={() => setShowAutoReplyModal(null)}
+          />
+      )}
+
     </div>
   );
 };

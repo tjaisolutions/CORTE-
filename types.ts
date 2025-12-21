@@ -182,6 +182,9 @@ export interface GeneratedClip {
   hashtags: string[]; // Generic fallback
   socialMetadata?: SocialMetadata[]; // Platform specific content
   
+  // Property used by local upload feature
+  isLocal?: boolean;
+
   // Tech Badges (Qualidade)
   appliedTech?: {
     faceTracking: boolean;
