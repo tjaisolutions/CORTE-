@@ -10,20 +10,20 @@ interface VideoPlayerProps {
 }
 
 const OpusCaptions = ({ captions, currentAbsoluteTime }: { captions: CaptionWord[], currentAbsoluteTime: number }) => {
-    // Busca a palavra ativa com uma janela de persistência maior (0.4s) para evitar piscadas
-    const currentWord = captions.find(w => currentAbsoluteTime >= (w.start - 0.05) && currentAbsoluteTime <= (w.end + 0.3));
+    // Busca a palavra ativa. Aumentamos a janela para 0.5s de persistência para evitar falhas de renderização
+    const currentWord = captions.find(w => currentAbsoluteTime >= (w.start - 0.1) && currentAbsoluteTime <= (w.end + 0.4));
 
     if (!currentWord) return null;
 
     const getWordStyle = (word: string) => {
         const clean = word.replace(/[^a-zA-Z]/g, '').toUpperCase();
-        if (["DINHEIRO", "VOCÊ", "BRASIL", "AGORA", "HOJE", "IMPORTANTE", "SURPRESA", "META"].includes(clean)) return "text-yellow-400 scale-110";
-        if (["NÃO", "NUNCA", "ERRO", "PERIGO", "PARE", "MORTE", "CHATA"].includes(clean)) return "text-red-500 scale-110";
+        const viralTerms = ["DINHEIRO", "VOCÊ", "BRASIL", "AGORA", "HOJE", "IMPORTANTE", "SURPRESA", "META", "CHATA", "ERRO", "PARE"];
+        if (viralTerms.includes(clean)) return "text-yellow-400 scale-110 drop-shadow-[0_0_15px_rgba(250,204,21,0.5)]";
         return "text-white";
     };
 
     return (
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-[90] pointer-events-none pb-28 px-4">
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-[90] pointer-events-none pb-32 px-4">
             <div className="flex flex-col items-center transition-all duration-75 text-center">
                 <div 
                     className={`
@@ -36,7 +36,7 @@ const OpusCaptions = ({ captions, currentAbsoluteTime }: { captions: CaptionWord
                         WebkitTextStroke: '2px black',
                         textShadow: '4px 4px 0 #000',
                         fontFamily: '"Outfit", sans-serif',
-                        transform: `rotate(${currentWord.word.length % 2 === 0 ? '-2deg' : '2deg'})`
+                        transform: `rotate(${currentWord.word.length % 2 === 0 ? '-1.5deg' : '1.5deg'})`
                     }}
                 >
                     {currentWord.word}
@@ -56,7 +56,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
 
   const start = clip.startTime || 0;
   const end = clip.endTime || (start + 30);
-  const duration = end - start;
+  const duration = Math.max(1, end - start);
   const style = clip.style;
 
   useEffect(() => {
@@ -82,16 +82,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
         const filename = clip.videoUrl.split('/').pop();
         window.location.href = `/api/download-local/${filename}`;
     } else {
-        // Redireciona para a rota de download real no servidor
         const downloadUrl = `/api/download-youtube?v=${clip.videoId}&title=${encodeURIComponent(clip.title)}`;
         window.open(downloadUrl, '_blank');
-        alert("Iniciando download MP4 real. O arquivo será baixado pelo seu navegador.");
     }
   };
 
   const currentAbsoluteTime = start + progress;
-  // Hook title reduzido para não sobrepor as legendas iniciais
-  const showHookTitle = progress < 0.6;
+  const showHookTitle = progress < 0.7;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-2xl p-0 md:p-4 animate-in fade-in duration-300">
@@ -117,22 +114,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
 
         {/* Hook Overlay */}
         {showHookTitle && (
-            <div className="absolute inset-0 z-[120] flex flex-col items-center justify-center pointer-events-none bg-black/40 backdrop-blur-[2px] animate-in fade-in duration-200">
-                <span className="text-indigo-400 font-bold uppercase tracking-widest text-[10px] mb-2 animate-pulse">Momento Identificado</span>
-                <h1 className="text-4xl font-black text-white text-center uppercase px-8 leading-tight drop-shadow-2xl">
+            <div className="absolute inset-0 z-[120] flex flex-col items-center justify-center pointer-events-none bg-black/40 backdrop-blur-[2px] animate-in fade-in duration-200 text-center">
+                <span className="text-indigo-400 font-bold uppercase tracking-widest text-[10px] mb-2 animate-pulse">Sincronizando Áudio...</span>
+                <h1 className="text-4xl font-black text-white px-8 uppercase leading-tight drop-shadow-2xl">
                     {clip.title}
                 </h1>
             </div>
         )}
 
-        {/* Legendas Oficiais Sincronizadas (Prioridade Máxima) */}
+        {/* Legendas Oficiais */}
         {!showHookTitle && displayCaptions.length > 0 && (
             <OpusCaptions captions={displayCaptions} currentAbsoluteTime={currentAbsoluteTime} />
         )}
         
         {!showHookTitle && displayCaptions.length === 0 && (
-            <div className="absolute bottom-32 left-0 right-0 z-[90] text-center px-6">
-                <p className="text-[10px] text-white/50 uppercase font-black tracking-widest animate-pulse">Sincronizando áudio e texto...</p>
+            <div className="absolute bottom-32 left-0 right-0 z-[90] text-center px-6 pointer-events-none">
+                <p className="text-[10px] text-white/40 uppercase font-black tracking-widest animate-pulse">Este vídeo não possui dados de transcrição.</p>
             </div>
         )}
 
