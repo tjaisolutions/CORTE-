@@ -10,15 +10,15 @@ interface VideoPlayerProps {
 }
 
 const OpusCaptions = ({ captions, currentAbsoluteTime }: { captions: CaptionWord[], currentAbsoluteTime: number }) => {
-    // Busca a palavra ativa. Aumentamos o buffer para 0.3s para cobrir atrasos de renderização
-    const currentWord = captions.find(w => currentAbsoluteTime >= (w.start - 0.1) && currentAbsoluteTime <= (w.end + 0.2));
+    // Busca a palavra ativa com uma janela de persistência maior (0.4s) para evitar piscadas
+    const currentWord = captions.find(w => currentAbsoluteTime >= (w.start - 0.05) && currentAbsoluteTime <= (w.end + 0.3));
 
     if (!currentWord) return null;
 
     const getWordStyle = (word: string) => {
         const clean = word.replace(/[^a-zA-Z]/g, '').toUpperCase();
         if (["DINHEIRO", "VOCÊ", "BRASIL", "AGORA", "HOJE", "IMPORTANTE", "SURPRESA", "META"].includes(clean)) return "text-yellow-400 scale-110";
-        if (["NÃO", "NUNCA", "ERRO", "PERIGO", "PARE", "MORTE"].includes(clean)) return "text-red-500 scale-110";
+        if (["NÃO", "NUNCA", "ERRO", "PERIGO", "PARE", "MORTE", "CHATA"].includes(clean)) return "text-red-500 scale-110";
         return "text-white";
     };
 
@@ -36,7 +36,7 @@ const OpusCaptions = ({ captions, currentAbsoluteTime }: { captions: CaptionWord
                         WebkitTextStroke: '2px black',
                         textShadow: '4px 4px 0 #000',
                         fontFamily: '"Outfit", sans-serif',
-                        transform: `rotate(${currentWord.word.length % 2 === 0 ? '-1.5deg' : '1.5deg'})`
+                        transform: `rotate(${currentWord.word.length % 2 === 0 ? '-2deg' : '2deg'})`
                     }}
                 >
                     {currentWord.word}
@@ -69,9 +69,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
           interval = setInterval(() => {
               setProgress(prev => {
                   if (prev >= duration) return 0;
-                  return prev + 0.05; 
+                  return prev + 0.1; 
               });
-          }, 50);
+          }, 100);
       }
       return () => clearInterval(interval);
   }, [duration, isPlaying]);
@@ -82,15 +82,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
         const filename = clip.videoUrl.split('/').pop();
         window.location.href = `/api/download-local/${filename}`;
     } else {
-        const script = `yt-dlp --download-sections "*${clip.startTime}-${clip.endTime}" -f "bestvideo+bestaudio" -o "${clip.title.replace(/\s+/g, '_')}.mp4" "https://www.youtube.com/watch?v=${clip.videoId}"`;
-        navigator.clipboard.writeText(script);
-        alert("Comando de download MP4 copiado!\n\nEste comando baixará o vídeo original com qualidade máxima diretamente do YouTube para o seu computador.");
+        // Redireciona para a rota de download real no servidor
+        const downloadUrl = `/api/download-youtube?v=${clip.videoId}&title=${encodeURIComponent(clip.title)}`;
+        window.open(downloadUrl, '_blank');
+        alert("Iniciando download MP4 real. O arquivo será baixado pelo seu navegador.");
     }
   };
 
   const currentAbsoluteTime = start + progress;
-  // Reduzido o tempo de título inicial para mostrar as legendas do áudio mais rápido
-  const showHookTitle = progress < 0.8;
+  // Hook title reduzido para não sobrepor as legendas iniciais
+  const showHookTitle = progress < 0.6;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-2xl p-0 md:p-4 animate-in fade-in duration-300">
@@ -117,21 +118,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
         {/* Hook Overlay */}
         {showHookTitle && (
             <div className="absolute inset-0 z-[120] flex flex-col items-center justify-center pointer-events-none bg-black/40 backdrop-blur-[2px] animate-in fade-in duration-200">
-                <span className="text-indigo-400 font-bold uppercase tracking-widest text-[10px] mb-2 animate-pulse">Análise de áudio concluída</span>
+                <span className="text-indigo-400 font-bold uppercase tracking-widest text-[10px] mb-2 animate-pulse">Momento Identificado</span>
                 <h1 className="text-4xl font-black text-white text-center uppercase px-8 leading-tight drop-shadow-2xl">
                     {clip.title}
                 </h1>
             </div>
         )}
 
-        {/* Legendas Oficiais Sincronizadas */}
+        {/* Legendas Oficiais Sincronizadas (Prioridade Máxima) */}
         {!showHookTitle && displayCaptions.length > 0 && (
             <OpusCaptions captions={displayCaptions} currentAbsoluteTime={currentAbsoluteTime} />
         )}
         
         {!showHookTitle && displayCaptions.length === 0 && (
             <div className="absolute bottom-32 left-0 right-0 z-[90] text-center px-6">
-                <p className="text-[10px] text-white/30 uppercase font-bold tracking-widest">Aguardando dados da transcrição...</p>
+                <p className="text-[10px] text-white/50 uppercase font-black tracking-widest animate-pulse">Sincronizando áudio e texto...</p>
             </div>
         )}
 
@@ -163,7 +164,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ clip, onClose, onUpdateClip }
         
         {/* Progress Timeline */}
         <div className="absolute bottom-0 left-0 h-1.5 bg-white/10 w-full z-[100]">
-             <div className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] transition-all duration-50 linear" style={{ width: `${(progress / duration) * 100}%` }}></div>
+             <div className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] transition-all duration-100 linear" style={{ width: `${(progress / duration) * 100}%` }}></div>
         </div>
       </div>
     </div>

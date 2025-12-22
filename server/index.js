@@ -8,6 +8,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { YoutubeTranscript } from 'youtube-transcript';
 import multer from 'multer';
 import fs from 'fs';
+import ytdl from '@distube/ytdl-core';
 
 dotenv.config();
 
@@ -47,33 +48,36 @@ const getYoutubeId = (url) => {
 
 /**
  * EXTRAÇÃO DE LEGENDAS DE ALTA FIDELIDADE:
- * Agora com maior tolerância nos limites de tempo para evitar perda de palavras iniciais/finais.
+ * Agora detecta automaticamente se o offset está em ms ou s e expande a busca.
  */
 const getLiteralCaptions = (transcriptItems, startTime, endTime) => {
     if (!transcriptItems || transcriptItems.length === 0) return [];
     
+    // Verifica se a unidade base é milissegundos ou segundos (heurística)
+    const isMS = transcriptItems[0].offset > 1000 || transcriptItems.some(i => i.duration > 100);
+    const divider = isMS ? 1000 : 1;
+
     return transcriptItems
         .filter(item => {
-            const itemStart = item.offset / 1000;
-            const itemEnd = (item.offset + item.duration) / 1000;
-            // Janela de segurança de 2 segundos para não perder contexto
-            return (itemStart >= startTime - 2 && itemStart <= endTime + 2) || 
-                   (itemEnd >= startTime - 2 && itemEnd <= endTime + 2);
+            const itemStart = item.offset / divider;
+            const itemEnd = (item.offset + item.duration) / divider;
+            // Janela de busca: inclui blocos que intersectam o intervalo do corte
+            return (itemStart <= endTime && itemEnd >= startTime);
         })
         .flatMap(item => {
             const words = item.text.split(/\s+/).filter(w => w.length > 0);
             if (words.length === 0) return [];
             
-            const durationPerWord = (item.duration / 1000) / words.length;
-            const offsetSec = item.offset / 1000;
+            const durationSec = item.duration / divider;
+            const offsetSec = item.offset / divider;
+            const durationPerWord = durationSec / words.length;
             
             return words.map((word, index) => {
                 const wordStart = offsetSec + (index * durationPerWord);
                 const wordEnd = offsetSec + ((index + 1) * durationPerWord);
                 
-                // Inclui a palavra se ela estiver minimamente dentro do range
-                // Adicionamos uma pequena folga de 0.2s para garantir sincronia
-                if (wordStart >= startTime - 0.2 && wordStart <= endTime + 0.2) {
+                // Retorna a palavra se ela estiver dentro do tempo do vídeo (com pequena folga)
+                if (wordStart >= startTime - 0.5 && wordStart <= endTime + 0.5) {
                     return {
                         word: word.trim(),
                         start: wordStart,
@@ -84,6 +88,30 @@ const getLiteralCaptions = (transcriptItems, startTime, endTime) => {
             }).filter(w => w !== null);
         });
 };
+
+/**
+ * ROTA DE DOWNLOAD REAL (MP4):
+ * Faz o stream direto do vídeo do YouTube para o navegador.
+ */
+app.get('/api/download-youtube', async (req, res) => {
+    const { v, title } = req.query;
+    if (!v) return res.status(400).send('Video ID missing');
+    
+    const videoUrl = `https://www.youtube.com/watch?v=${v}`;
+    const filename = `${(title || 'video').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.mp4`;
+
+    res.header('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    try {
+        ytdl(videoUrl, {
+            format: 'mp4',
+            quality: 'highestvideo'
+        }).pipe(res);
+    } catch (err) {
+        console.error("Erro no stream de download:", err);
+        res.status(500).send("Erro ao processar download.");
+    }
+});
 
 app.get('/api/download-local/:filename', (req, res) => {
     const filePath = path.join(UPLOADS_DIR, req.params.filename);
@@ -98,7 +126,7 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
 
     try {
-        const prompt = `Analise este arquivo de vídeo: ${req.file.originalname}. Identifique 3 trechos virais de 30-60 segundos. Retorne JSON: Array<{title: string, viralScore: number, startTime: number, endTime: number}>`;
+        const prompt = `Analise este arquivo de vídeo local. Identifique 3 trechos virais de 30-60 segundos. Retorne JSON Array: {title, viralScore, startTime, endTime}`;
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
             contents: prompt,
@@ -108,11 +136,12 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
         const timeSlots = JSON.parse(response.text || "[]");
         const clips = timeSlots.map(slot => ({
             ...slot,
+            id: Math.random().toString(36).substr(2,9),
             videoId: "local",
             videoUrl: `/uploads/${req.file.filename}`,
             isLocal: true,
-            transcriptSnippet: "Vídeo enviado via upload local.",
-            captions: [] 
+            transcriptSnippet: "Vídeo local.",
+            captions: []
         }));
 
         res.json(clips);
@@ -124,41 +153,42 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
 app.post('/api/process-video', async (req, res) => {
     const { url } = req.body;
     const videoId = getYoutubeId(url);
-    if (!videoId) return res.status(400).json({ error: 'URL do YouTube inválida.' });
+    if (!videoId) return res.status(400).json({ error: 'URL inválida.' });
 
     try {
-        console.log(`[Backend] Buscando transcrição para: ${videoId}`);
-        
         let transcript;
         try {
-            // Tenta Português primeiro, depois cai para o padrão (Inglês ou original)
             transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'pt' })
                 .catch(() => YoutubeTranscript.fetchTranscript(videoId));
         } catch (e) {
-            console.warn(`[Backend] Falha ao obter transcrição para ${videoId}:`, e.message);
-            return res.status(422).json({ error: "Este vídeo não possui transcrição disponível." });
+            return res.status(422).json({ error: "Transcrição indisponível." });
         }
 
         const transcriptText = transcript.map(t => `[${(t.offset / 1000).toFixed(1)}s] ${t.text}`).join(' ');
 
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Você é um editor viral profissional. Analise a transcrição abaixo e identifique os 3 momentos mais impactantes (30-60 segundos cada).
-            
-            IMPORTANTE: Respeite rigorosamente os marcadores de tempo da transcrição.
+            contents: `Aja como um editor viral. Identifique 3 ganchos (30-60s) usando EXATAMENTE os tempos da transcrição. Certifique-se que startTime < endTime.
             
             Transcrição: ${transcriptText.substring(0, 25000)}
 
-            Retorne APENAS um JSON Array:
-            Array<{title: string, viralScore: number, startTime: number, endTime: number}>`,
+            Retorne JSON Array: {title: string, viralScore: number, startTime: number, endTime: number}`,
             config: { responseMimeType: "application/json" }
         });
 
         const timeSlots = JSON.parse(response.text || "[]");
         const enrichedClips = timeSlots.map(slot => {
-            const literalCaptions = getLiteralCaptions(transcript, slot.startTime, slot.endTime);
+            // Se startTime > endTime (erro do modelo), corrigimos invertendo
+            let s = slot.startTime;
+            let e = slot.endTime;
+            if (s > e) { [s, e] = [e, s]; }
+
+            const literalCaptions = getLiteralCaptions(transcript, s, e);
+            
             return {
                 ...slot,
+                startTime: s,
+                endTime: e,
                 videoId: videoId,
                 transcriptSnippet: literalCaptions.map(c => c.word).join(' '),
                 captions: literalCaptions,
