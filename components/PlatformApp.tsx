@@ -217,6 +217,10 @@ const PlatformApp: React.FC<PlatformAppProps> = ({ user, onLogout, onNavigateToS
           ...job,
           generatedClips: job.generatedClips.map(c => c.id === updatedClip.id ? updatedClip : c)
       })));
+      // Update playingClip so the player reflects changes immediately
+      if (playingClip?.id === updatedClip.id) {
+          setPlayingClip(updatedClip);
+      }
   };
 
   const handleRegenerateVariant = (clip: GeneratedClip) => {

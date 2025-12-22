@@ -37,23 +37,17 @@ const getYoutubeId = (url) => {
     return (match && match[2].length === 11) ? match[2] : null;
 };
 
-/**
- * MOTOR DE LEGENDAS ULTRA-PRECISO
- * Normaliza tempos e distribui palavras proporcionalmente ao áudio
- */
 const getLiteralCaptions = (transcriptItems, startTime, endTime) => {
     if (!transcriptItems || transcriptItems.length === 0) return [];
     
-    // Detecta se o YouTube enviou em ms (12000) ou s (12.0)
-    const isMS = transcriptItems.some(i => i.offset > 1000);
+    const isMS = transcriptItems.some(i => i.offset > 1500);
     const divider = isMS ? 1000 : 1;
 
     return transcriptItems
         .filter(item => {
             const s = item.offset / divider;
             const e = (item.offset + item.duration) / divider;
-            // Captura blocos que intersectam o tempo do clipe (margem de 1s)
-            return (s <= endTime + 1 && e >= startTime - 1);
+            return (s <= endTime + 0.5 && e >= startTime - 0.5);
         })
         .flatMap(item => {
             const cleanText = item.text
@@ -70,8 +64,6 @@ const getLiteralCaptions = (transcriptItems, startTime, endTime) => {
             return words.map((word, index) => {
                 const wordStart = offsetSec + (index * durationPerWord);
                 const wordEnd = offsetSec + ((index + 1) * durationPerWord);
-                
-                // Filtra apenas palavras que pertencem ao intervalo do corte
                 if (wordEnd >= startTime && wordStart <= endTime) {
                     return { word: word.trim(), start: wordStart, end: wordEnd };
                 }
@@ -81,23 +73,35 @@ const getLiteralCaptions = (transcriptItems, startTime, endTime) => {
 };
 
 /**
- * DOWNLOAD MP4 REAL (Sem scripts)
+ * DOWNLOAD MP4 CORRETO
+ * Força o cabeçalho de download antes de iniciar o pipe do stream
  */
 app.get('/api/download-youtube', async (req, res) => {
     const { v, title } = req.query;
-    if (!v) return res.status(400).send('Video ID missing');
+    if (!v) return res.status(400).send('ID do vídeo ausente');
     
-    const filename = `${(title || 'corte_viral').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.mp4`;
-    res.header('Content-Disposition', `attachment; filename="${filename}"`);
-    
+    const videoTitle = title ? String(title) : 'corte_viral';
+    const filename = `${videoTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.mp4`;
+
     try {
-        ytdl(`https://www.youtube.com/watch?v=${v}`, {
+        // Importante: Definir cabeçalhos ANTES do pipe para o navegador saber que é um arquivo
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'video/mp4');
+
+        const stream = ytdl(`https://www.youtube.com/watch?v=${v}`, {
             quality: 'highestvideo',
             filter: 'audioandvideo'
-        }).pipe(res);
+        });
+
+        stream.on('error', (err) => {
+            console.error('Stream Error:', err);
+            if (!res.headersSent) res.status(500).send('Erro ao baixar vídeo do YouTube.');
+        });
+
+        stream.pipe(res);
     } catch (err) {
-        console.error("Erro no download:", err);
-        res.status(500).send("Erro ao processar download MP4.");
+        console.error('Download Route Error:', err);
+        if (!res.headersSent) res.status(500).send("Erro interno no processador de download.");
     }
 });
 
@@ -112,16 +116,14 @@ app.post('/api/process-video', async (req, res) => {
             transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'pt' })
                 .catch(() => YoutubeTranscript.fetchTranscript(videoId));
         } catch (e) {
-            return res.status(422).json({ error: "Este vídeo não possui legendas." });
+            return res.status(422).json({ error: "Legendas não disponíveis para este vídeo." });
         }
 
         const transcriptText = transcript.map(t => `[${(t.offset / 1000).toFixed(1)}s] ${t.text}`).join(' ');
 
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Aja como um editor de Shorts. Identifique 3 ganchos virais (30-60s) usando estritamente os tempos da transcrição. 
-            Transcrição: ${transcriptText.substring(0, 20000)}
-            Retorne JSON Array: {title: string, viralScore: number, startTime: number, endTime: number}`,
+            contents: `Analise para 3 cortes virais (30-60s) baseando-se RIGOROSAMENTE nos tempos da transcrição. JSON Array: {title, viralScore, startTime, endTime}. Transcrição: ${transcriptText.substring(0, 15000)}`,
             config: { responseMimeType: "application/json" }
         });
 
@@ -130,17 +132,14 @@ app.post('/api/process-video', async (req, res) => {
             let s = Math.max(0, slot.startTime);
             let e = slot.endTime;
             if (s > e) [s, e] = [e, s];
-            
             const captions = getLiteralCaptions(transcript, s, e);
-            
-            return {
-                ...slot,
-                startTime: s,
-                endTime: e,
-                videoId: videoId,
-                transcriptSnippet: captions.map(c => c.word).join(' '),
-                captions: captions,
-                videoUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+            return { 
+                ...slot, 
+                startTime: s, 
+                endTime: e, 
+                videoId, 
+                captions, 
+                videoUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` 
             };
         });
 

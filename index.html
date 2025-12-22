@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Corte+ | Enterprise AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -16,23 +17,23 @@
             },
             colors: {
               grafite: {
-                950: '#111111', // Fundo Principal (Grafite Profundo)
-                900: '#1c1c1c', // Fundo Cards/Sidebar (Grafite Médio)
-                800: '#2a2a2a', // Hover States
+                950: '#111111', 
+                900: '#1c1c1c', 
+                800: '#2a2a2a', 
               },
               giz: {
-                500: '#333333', // Bordas Sutis
+                500: '#333333', 
               },
               gelo: {
-                300: '#888888', // Texto Secundário (Cinza Concreto)
-                200: '#444444', // Bordas Hover
-                100: '#eeeeee', // Texto Primário Alternativo
+                300: '#888888', 
+                200: '#444444', 
+                100: '#eeeeee', 
               },
               white: '#ffffff',
               accent: {
-                500: '#ffffff', // Acento agora é BRANCO PURO
-                600: '#e5e5e5', // Hover do acento
-                100: 'rgba(255, 255, 255, 0.1)', // Fundo sutil de acento
+                500: '#ffffff', 
+                600: '#e5e5e5', 
+                100: 'rgba(255, 255, 255, 0.1)', 
               }
             },
             animation: {
@@ -69,13 +70,11 @@
         font-family: 'Outfit', sans-serif;
       }
 
-      /* Scrollbar Grafite */
       ::-webkit-scrollbar { width: 6px; height: 6px; }
       ::-webkit-scrollbar-track { background: transparent; }
       ::-webkit-scrollbar-thumb { background: #333333; border-radius: 3px; }
       ::-webkit-scrollbar-thumb:hover { background: #555555; }
 
-      /* Utility: Graphite Card */
       .graphite-card {
         background-color: #1c1c1c;
         border: 1px solid #333333;
@@ -93,7 +92,6 @@
         color: #555555;
       }
 
-      /* Noise Texture (Sutil) */
       .bg-noise {
         background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
         pointer-events: none;
@@ -115,25 +113,22 @@
   <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "vite": "https://esm.sh/vite@^7.3.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "react": "https://esm.sh/react@^18.2.0",
+    "react-dom/": "https://esm.sh/react-dom@^18.2.0/",
+    "react/": "https://esm.sh/react@^18.2.0/",
+    "vite": "https://esm.sh/vite@^5.0.8",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^4.2.1",
     "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
-    "express": "https://esm.sh/express@^5.2.1",
+    "express": "https://esm.sh/express@^4.18.2",
     "path": "https://esm.sh/path@^0.12.7",
     "cors": "https://esm.sh/cors@^2.8.5",
-    "dotenv": "https://esm.sh/dotenv@^17.2.3",
+    "dotenv": "https://esm.sh/dotenv@^16.3.1",
     "fs": "https://esm.sh/fs@^0.0.1-security",
     "@distube/ytdl-core": "https://esm.sh/@distube/ytdl-core@^4.16.12",
-    "@google/generative-ai": "https://esm.sh/@google/generative-ai@^0.24.1",
-    "@google/generative-ai/": "https://esm.sh/@google/generative-ai@^0.24.1/",
     "url": "https://esm.sh/url@^0.11.4",
     "youtube-transcript": "https://esm.sh/youtube-transcript@^1.2.1",
-    "youtube-dl-exec": "https://esm.sh/youtube-dl-exec@^3.0.27",
     "@/": "./",
-    "multer": "https://esm.sh/multer@^2.0.2"
+    "multer": "https://esm.sh/multer@^1.4.5-lts.1"
   }
 }
 </script>
