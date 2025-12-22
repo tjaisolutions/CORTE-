@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { GeneratedClip } from '../types';
 import { IconEye, IconEdit, IconDownload, IconCheckCircle, IconWand, IconShare, IconRefresh } from './Icons';
 
@@ -8,6 +8,7 @@ interface ClipResultProps {
   onPlay: (clip: GeneratedClip) => void;
   onEdit?: (clip: GeneratedClip) => void;
   onAudit?: (clip: GeneratedClip) => void;
+  // Fix: Added missing props detected by TypeScript in PlatformApp.tsx
   onPublish?: (clip: GeneratedClip) => void;
   onRegenerate?: (clip: GeneratedClip) => void;
   selectionMode?: boolean;
@@ -18,17 +19,43 @@ interface ClipResultProps {
 const ClipResult: React.FC<ClipResultProps> = ({ 
     clip, onPlay, onEdit, onAudit, onPublish, onRegenerate, selectionMode, isSelected, onToggleSelection 
 }) => {
+  const [isRendering, setIsRendering] = useState(false);
 
-  const handleDownload = (e: React.MouseEvent) => {
+  const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (clip.isLocal || clip.videoId === 'local') {
-        const filename = clip.videoUrl.split('/').pop();
-        window.location.href = `/api/download-local/${filename}`;
-    } else {
-        // Redireciona para o download MP4 real pelo servidor
-        const url = `/api/download-youtube?v=${clip.videoId}&title=${encodeURIComponent(clip.title)}`;
-        window.open(url, '_blank');
-        alert("Iniciando download MP4 real diretamente no seu navegador.");
+    if (isRendering) return;
+
+    try {
+        setIsRendering(true);
+        const response = await fetch('/api/render-clip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                videoId: clip.videoId,
+                startTime: clip.startTime,
+                endTime: clip.endTime,
+                captions: clip.captions,
+                title: clip.title
+            })
+        });
+
+        if (!response.ok) throw new Error('Falha na renderização do servidor');
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${clip.title.replace(/\s+/g, '_')}_corte_plus.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+    } catch (err) {
+        console.error('Erro no processamento:', err);
+        alert('Erro ao processar vídeo. O servidor pode estar sobrecarregado.');
+    } finally {
+        setIsRendering(false);
     }
   };
 
@@ -64,10 +91,15 @@ const ClipResult: React.FC<ClipResultProps> = ({
                 <div className="flex flex-wrap justify-center gap-2 px-3">
                     <button 
                         onClick={handleDownload}
-                        className="w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-white hover:text-indigo-600 transition-all shadow-lg border border-white/10 backdrop-blur-md"
-                        title="Baixar MP4 Real"
+                        disabled={isRendering}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-lg border border-white/10 backdrop-blur-md ${isRendering ? 'bg-slate-700 cursor-wait' : 'bg-indigo-600 text-white hover:bg-white hover:text-indigo-600'}`}
+                        title="Baixar com Legendas"
                     >
-                        <IconDownload className="w-5 h-5" />
+                        {isRendering ? (
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                            <IconDownload className="w-5 h-5" />
+                        )}
                     </button>
                     <button 
                         onClick={(e) => { e.stopPropagation(); onEdit && onEdit(clip); }}
@@ -85,13 +117,33 @@ const ClipResult: React.FC<ClipResultProps> = ({
                             <IconWand className="w-5 h-5" />
                         </button>
                     )}
+                    {/* Fix: Implementation of Share button for onPublish */}
+                    {onPublish && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onPublish(clip); }}
+                            className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center hover:bg-white hover:text-black transition-all border border-white/10 backdrop-blur-md"
+                            title="Publicar"
+                        >
+                            <IconShare className="w-5 h-5" />
+                        </button>
+                    )}
+                    {/* Fix: Implementation of Refresh button for onRegenerate */}
+                    {onRegenerate && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onRegenerate(clip); }}
+                            className="w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center hover:bg-white hover:text-black transition-all border border-white/10 backdrop-blur-md"
+                            title="Regerar Variante"
+                        >
+                            <IconRefresh className="w-5 h-5" />
+                        </button>
+                    )}
                 </div>
             </div>
          )}
 
          <div className="absolute top-3 left-3 flex flex-col items-start gap-1">
             <div className="bg-black/60 backdrop-blur-md border border-white/10 px-2 py-1 rounded text-[10px] font-black text-indigo-400">
-                SCORE: {clip.viralScore}
+                {isRendering ? 'PROCESSANDO...' : `SCORE: ${clip.viralScore}`}
             </div>
          </div>
       </div>
@@ -102,7 +154,7 @@ const ClipResult: React.FC<ClipResultProps> = ({
             <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{Math.floor(clip.endTime - clip.startTime)}s</span>
             <div className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest">Ativo</span>
+                <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest">IA Subtitles Active</span>
             </div>
          </div>
       </div>

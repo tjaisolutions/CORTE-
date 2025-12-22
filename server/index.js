@@ -6,11 +6,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { YoutubeTranscript } from 'youtube-transcript';
-import multer from 'multer';
 import fs from 'fs';
 import ytdl from '@distube/ytdl-core';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegStatic from 'ffmpeg-static';
 
 dotenv.config();
+ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,129 +20,140 @@ const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DIST_DIR = path.join(__dirname, '../dist');
-const UPLOADS_DIR = path.join(__dirname, '../uploads');
+const TEMP_DIR = path.join(__dirname, '../temp');
 
-if (!fs.existsSync(UPLOADS_DIR)) {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(DIST_DIR));
-app.use('/uploads', express.static(UPLOADS_DIR));
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const getYoutubeId = (url) => {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
-};
-
-const getLiteralCaptions = (transcriptItems, startTime, endTime) => {
-    if (!transcriptItems || transcriptItems.length === 0) return [];
-    
-    const isMS = transcriptItems.some(i => i.offset > 1500);
-    const divider = isMS ? 1000 : 1;
-
-    return transcriptItems
-        .filter(item => {
-            const s = item.offset / divider;
-            const e = (item.offset + item.duration) / divider;
-            return (s <= endTime + 0.5 && e >= startTime - 0.5);
-        })
-        .flatMap(item => {
-            const cleanText = item.text
-                .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
-                .replace(/\[.*?\]/g, '').trim();
-
-            const words = cleanText.split(/\s+/).filter(w => w.length > 0);
-            if (words.length === 0) return [];
-            
-            const durationSec = item.duration / divider;
-            const offsetSec = item.offset / divider;
-            const durationPerWord = durationSec / words.length;
-            
-            return words.map((word, index) => {
-                const wordStart = offsetSec + (index * durationPerWord);
-                const wordEnd = offsetSec + ((index + 1) * durationPerWord);
-                if (wordEnd >= startTime && wordStart <= endTime) {
-                    return { word: word.trim(), start: wordStart, end: wordEnd };
-                }
-                return null;
-            }).filter(w => w !== null);
-        });
+// Auxiliar para converter segundos em formato SRT (HH:MM:SS,mmm)
+const toSrtTime = (seconds) => {
+    const s = Math.max(0, seconds);
+    const hours = Math.floor(s / 3600);
+    const minutes = Math.floor((s % 3600) / 60);
+    const secs = Math.floor(s % 60);
+    const ms = Math.floor((s % 1) * 1000);
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
 };
 
 /**
- * DOWNLOAD MP4 CORRETO
- * Força o cabeçalho de download antes de iniciar o pipe do stream
+ * ROTA DE RENDERIZAÇÃO REAL
+ * Queima legendas no vídeo e entrega MP4 final
  */
-app.get('/api/download-youtube', async (req, res) => {
-    const { v, title } = req.query;
-    if (!v) return res.status(400).send('ID do vídeo ausente');
-    
-    const videoTitle = title ? String(title) : 'corte_viral';
-    const filename = `${videoTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.mp4`;
+app.post('/api/render-clip', async (req, res) => {
+    const { videoId, startTime, endTime, captions, title } = req.body;
+    const requestId = Date.now();
+    const srtPath = path.join(TEMP_DIR, `subs_${requestId}.srt`);
+    const outputPath = path.join(TEMP_DIR, `render_${requestId}.mp4`);
 
     try {
-        // Importante: Definir cabeçalhos ANTES do pipe para o navegador saber que é um arquivo
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Type', 'video/mp4');
+        // 1. Gerar arquivo SRT temporário (tempos relativos ao início do corte)
+        const srtContent = captions.map((c, i) => {
+            const startRel = c.start - startTime;
+            const endRel = c.end - startTime;
+            return `${i + 1}\n${toSrtTime(startRel)} --> ${toSrtTime(endRel)}\n${c.word}\n`;
+        }).join('\n');
+        
+        fs.writeFileSync(srtPath, srtContent);
 
-        const stream = ytdl(`https://www.youtube.com/watch?v=${v}`, {
-            quality: 'highestvideo',
-            filter: 'audioandvideo'
-        });
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        
+        // 2. Iniciar FFmpeg com Stream direto do YouTube
+        // Usamos scale=-2:720 para manter proporção e economizar CPU/RAM
+        ffmpeg()
+            .input(ytdl(videoUrl, { 
+                quality: 'highestvideo',
+                filter: format => format.container === 'mp4',
+                begin: `${Math.floor(startTime)}s` // Otimização de download range
+            }))
+            .inputOptions([`-ss 0`, `-t ${endTime - startTime}`])
+            .videoFilters([
+                `scale=-2:720`,
+                {
+                    filter: 'subtitles',
+                    options: {
+                        filename: srtPath,
+                        force_style: 'Alignment=10,Outline=1,OutlineColour=&H000000,FontSize=24,PrimaryColour=&H00FFFF,Bold=1'
+                    }
+                }
+            ])
+            .outputOptions([
+                '-preset ultrafast',
+                '-c:v libx264',
+                '-crf 28',
+                '-movflags +faststart',
+                '-pix_fmt yuv420p'
+            ])
+            .on('start', (cmd) => console.log('FFmpeg iniciado:', cmd))
+            .on('error', (err) => {
+                console.error('Erro FFmpeg:', err);
+                if (!res.headersSent) res.status(500).send('Erro na renderização.');
+                cleanup();
+            })
+            .on('end', () => {
+                console.log('Renderização concluída.');
+                res.download(outputPath, `${title}.mp4`, (err) => {
+                    if (err) console.error('Erro no download:', err);
+                    cleanup();
+                });
+            })
+            .save(outputPath);
 
-        stream.on('error', (err) => {
-            console.error('Stream Error:', err);
-            if (!res.headersSent) res.status(500).send('Erro ao baixar vídeo do YouTube.');
-        });
+    } catch (error) {
+        console.error('Erro na rota render:', error);
+        res.status(500).json({ error: error.message });
+        cleanup();
+    }
 
-        stream.pipe(res);
-    } catch (err) {
-        console.error('Download Route Error:', err);
-        if (!res.headersSent) res.status(500).send("Erro interno no processador de download.");
+    function cleanup() {
+        try {
+            if (fs.existsSync(srtPath)) fs.unlinkSync(srtPath);
+            // O arquivo de vídeo é deletado após o download ou erro
+            setTimeout(() => {
+                if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+            }, 60000); // 1 minuto de margem para o download completar
+        } catch (e) { console.error('Limpeza falhou:', e); }
     }
 });
 
+// Mantém as outras rotas existentes (process-video, etc)
 app.post('/api/process-video', async (req, res) => {
     const { url } = req.body;
-    const videoId = getYoutubeId(url);
-    if (!videoId) return res.status(400).json({ error: 'URL inválida.' });
-
+    const videoId = url.includes('v=') ? url.split('v=')[1].split('&')[0] : url.split('/').pop();
+    
     try {
-        let transcript;
-        try {
-            transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'pt' })
-                .catch(() => YoutubeTranscript.fetchTranscript(videoId));
-        } catch (e) {
-            return res.status(422).json({ error: "Legendas não disponíveis para este vídeo." });
-        }
-
+        const transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'pt' }).catch(() => YoutubeTranscript.fetchTranscript(videoId));
         const transcriptText = transcript.map(t => `[${(t.offset / 1000).toFixed(1)}s] ${t.text}`).join(' ');
 
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Analise para 3 cortes virais (30-60s) baseando-se RIGOROSAMENTE nos tempos da transcrição. JSON Array: {title, viralScore, startTime, endTime}. Transcrição: ${transcriptText.substring(0, 15000)}`,
+            contents: `Analise para 3 cortes virais (30-60s) baseando-se nos tempos. JSON Array: {title, viralScore, startTime, endTime}. Transcrição: ${transcriptText.substring(0, 15000)}`,
             config: { responseMimeType: "application/json" }
         });
 
         const timeSlots = JSON.parse(response.text || "[]");
         const clips = timeSlots.map(slot => {
-            let s = Math.max(0, slot.startTime);
+            let s = slot.startTime;
             let e = slot.endTime;
-            if (s > e) [s, e] = [e, s];
-            const captions = getLiteralCaptions(transcript, s, e);
-            return { 
-                ...slot, 
-                startTime: s, 
-                endTime: e, 
-                videoId, 
-                captions, 
-                videoUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` 
-            };
+            
+            // Extração de legendas literal para o clipe
+            const captions = transcript
+                .filter(t => (t.offset/1000) >= s && (t.offset/1000) <= e)
+                .flatMap(t => {
+                    const words = t.text.split(' ');
+                    const dur = (t.duration / 1000) / words.length;
+                    return words.map((w, i) => ({
+                        word: w,
+                        start: (t.offset/1000) + (i * dur),
+                        end: (t.offset/1000) + ((i + 1) * dur)
+                    }));
+                });
+
+            return { ...slot, videoId, captions, videoUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` };
         });
 
         res.json(clips);
@@ -150,4 +163,4 @@ app.post('/api/process-video', async (req, res) => {
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(DIST_DIR, 'index.html')));
-app.listen(PORT, () => console.log(`🚀 Corte+ Server ativo na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server rodando na porta ${PORT}`));
